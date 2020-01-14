@@ -215,6 +215,7 @@
     </property>
     <addaction name="action_printtest"/>
     <addaction name="action_print"/>
+    <addaction name="action_printagain"/>
    </widget>
    <widget class="QMenu" name="menu_4">
     <property name="title">
@@ -268,6 +269,14 @@
   <action name="action_tsc_density">
    <property name="text">
     <string>打印浓度</string>
+   </property>
+  </action>
+  <action name="action_printagain">
+   <property name="enabled">
+    <bool>false</bool>
+   </property>
+   <property name="text">
+    <string>二次打印</string>
    </property>
   </action>
  </widget>

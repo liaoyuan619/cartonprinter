@@ -12,7 +12,7 @@ import io
 
 if hasattr(sys, 'frozen'):
     os.environ['PATH'] = sys._MEIPASS + ";" + os.environ['PATH']
-from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QFileDialog, QMessageBox, QInputDialog
+from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QFileDialog, QMessageBox, QInputDialog, QLineEdit
 from PyQt5.QtCore import QStringListModel
 from PyQt5.QtGui import QIcon
 from tscprinterUi import Ui_MainWindow
@@ -33,14 +33,15 @@ class MainUiWin(QMainWindow, Ui_MainWindow):
         self.action_about.triggered.connect(self.openAboutDiag)
         self.action_print.triggered.connect(self.manual_print)
         self.action_printtest.triggered.connect(self.test_print)
+        self.action_printagain.triggered.connect(self.duplicate_print)
+
         self.action_tsc_speed.triggered.connect(self.adjust_tsc_speed)
         self.action_tsc_density.triggered.connect(self.adjust_tsc_density)
 
-        # self.lineEdit.returnPressed.connect(self.barcodeInputScaned)
-        self.lineEdit.editingFinished.connect(self.barcodeInputScaned)
+        self.lineEdit.returnPressed.connect(self.barcodeInputScaned)
+        # self.lineEdit.editingFinished.connect(self.barcodeInputScaned)
 
-        self.snList = []
-        self.version = "版本:1.0.3"
+        self.version = "版本:1.0.4"
         self.packCount = 100
 
         self.boxmask = ""
@@ -50,11 +51,59 @@ class MainUiWin(QMainWindow, Ui_MainWindow):
         self.servaddr = ""
         self.servport = ""
 
+        self.snList = []
         self.dataQRcode1 = ""
         self.dataQRcode2 = ""
+        self.boxserial = ""
+
+        self.snList_dup = []
+        self.dataQRcode1_dup = ""
+        self.dataQRcode2_dup = ""
+        self.boxserial_dup = ""
 
         self.tsc_speed = 2
         self.tsc_density = 8
+
+    def getAuthPasswd(self):
+        passwd = ""
+        url = "http://{}:{}/api/syscfg?name=app_back_passwd".format(self.servaddr, self.servport)
+
+        try:
+            r = requests.get(url)
+            logging.debug(r.content)
+            if r.json()['ret']:
+                passwd = r.json()['data']['value']
+            else:
+                raise Exception("not set")
+        except Exception as e:
+            logging.debug(str(e))
+
+        return passwd
+
+    def auth_dialog(self):
+        ret = False
+        input_passwd, ok = QInputDialog.getText(self, "认证", "输入密码：", QLineEdit.Password)
+        if ok:
+            passwd = self.getAuthPasswd()
+            if passwd:
+                if input_passwd == passwd:
+                    ret = True
+        else:
+            ret = False
+
+        return ret
+
+    def duplicate_print(self):
+        self.log("二次打印箱唛")
+
+        if not self.auth_dialog():
+            self.log("认证失败！")
+            return
+
+        if self.snList_dup:
+            self.do_noupload_print(self.boxserial_dup, self.snList_dup, self.dataQRcode1_dup, self.dataQRcode2_dup)
+        else:
+            self.log("已扫描计数为0！")
 
     def adjust_tsc_speed(self):
         speed, ok = QInputDialog.getInt(self, "打印速度", "打印速度", value=2, min=1, max=12)
@@ -73,37 +122,59 @@ class MainUiWin(QMainWindow, Ui_MainWindow):
         self.tscPrint("{}".format(self.tsc_speed), "{}".format(self.tsc_density),  "6940278310101", "2099-01-01",
                       "100", "T20191224WS191001A*****", test_qrcode1, test_qrcode2)
 
-    def do_print(self):
-        self.log("向服务器查询箱流水号...")
-        boxserial = self.getBoxSerial()
-        if boxserial:
-            boxindex = int(boxserial[-5:])
-            self.log("获取箱流水号：" + "{:0>5d}".format(boxindex))
+    def do_print(self, boxserial, snList, dataQRcode1, dataQRcode2):
+        boxindex = int(boxserial[-5:])
+        self.log("获取箱流水号：" + "{:0>5d}".format(boxindex))
 
-            boxindex += 1
-            if self.uploadData(self.snList, self.boxmask + "{:0>5d}".format(boxindex)):
-                self.log("箱号：" + self.boxmask + "{:0>5d}".format(boxindex) + " 数据上传服务器成功")
+        boxindex += 1
+        if self.uploadData(snList, self.boxmask + "{:0>5d}".format(boxindex)):
+            self.log("箱号：" + self.boxmask + "{:0>5d}".format(boxindex) + " 数据上传服务器成功")
 
-                self.log("打印箱唛,{}台".format(len(self.snList)))
-                self.tscPrint("{}".format(self.tsc_speed), "{}".format(self.tsc_density),
-                              self.color, self.date, "{}".format(len(self.snList)),
-                              self.boxmask + "{:0>5d}".format(boxindex),
-                              self.dataQRcode1, self.dataQRcode2)
+            self.log("打印箱唛,{}台".format(len(snList)))
+            self.tscPrint("{}".format(self.tsc_speed), "{}".format(self.tsc_density),
+                                  self.color, self.date, "{}".format(len(snList)),
+                                  self.boxmask + "{:0>5d}".format(boxindex),
+                                  dataQRcode1, dataQRcode2)
 
-                self.snList = []
-                self.dataQRcode1 = ""
-                self.dataQRcode2 = ""
-
-                self.lcdNumber.display(len(self.snList))
-                self.listWidget.clear()
-
-            else:
-                self.log("上传服务器失败！")
         else:
-            self.log("获取箱流水号失败！")
+            self.log("上传服务器失败！")
+
+    def do_noupload_print(self, boxserial, snList, dataQRcode1, dataQRcode2):
+        if not boxserial:
+            self.log("向服务器查询箱流水号...")
+            boxserial = self.getBoxSerial()
+            if not boxserial:
+                self.log("获取箱流水号失败！")
+                return
+
+        boxindex = int(boxserial[-5:])
+        self.log("获取箱流水号：" + "{:0>5d}".format(boxindex))
+
+        boxindex += 1
+        self.log("箱号：" + self.boxmask + "{:0>5d}".format(boxindex))
+
+        self.log("打印箱唛,{}台".format(len(snList)))
+        self.tscPrint("{}".format(self.tsc_speed), "{}".format(self.tsc_density),
+                                  self.color, self.date, "{}".format(len(snList)),
+                                  self.boxmask + "{:0>5d}".format(boxindex),
+                                  dataQRcode1, dataQRcode2)
+
+    def prepare_next_print(self):
+        self.snList_dup = self.snList
+        self.dataQRcode1_dup = self.dataQRcode1
+        self.dataQRcode2_dup = self.dataQRcode2
+        self.boxserial_dup = self.boxserial
+
+        self.snList = []
+        self.dataQRcode1 = ""
+        self.dataQRcode2 = ""
+        self.boxserial = ""
+
+        self.lcdNumber.display(len(self.snList))
+        self.listWidget.clear()
 
     def manual_print(self):
-        self.log("打印箱唛")
+        self.log("打印尾数箱唛")
 
         if not len(self.snList):
             self.log("已扫描计数为0！")
@@ -138,10 +209,19 @@ class MainUiWin(QMainWindow, Ui_MainWindow):
         logging.debug(self.dataQRcode1)
         logging.debug(self.dataQRcode2)
 
-        self.do_print()
+        self.log("向服务器查询箱流水号...")
+        boxserial = self.getBoxSerial()
+        if not boxserial:
+            self.log("获取箱流水号失败！")
+            return
+
+        self.boxserial = boxserial
+
+        self.do_print(self.boxserial, self.snList, self.dataQRcode1, self.dataQRcode2)
+        self.prepare_next_print()
 
     def log(self, msg):
-        self.textEdit.append(msg)
+        self.textEdit.append(time.strftime("%Y-%m-%d %H:%M:%S ", time.localtime()) + msg)
 
     def openAboutDiag(self):
         QMessageBox.about(self, "关于", self.version)
@@ -157,6 +237,7 @@ class MainUiWin(QMainWindow, Ui_MainWindow):
             self.listWidget.setEnabled(True)
             self.action_print.setEnabled(True)
             self.action_printtest.setEnabled(False)
+            self.action_printagain.setEnabled(True)
         else:
             # self.generate_qrcode()
             pass
@@ -192,7 +273,16 @@ class MainUiWin(QMainWindow, Ui_MainWindow):
                         logging.debug(self.dataQRcode1)
                         logging.debug(self.dataQRcode2)
 
-                        self.do_print()
+                        self.log("向服务器查询箱流水号...")
+                        boxserial = self.getBoxSerial()
+                        if not boxserial:
+                            self.log("获取箱流水号失败！")
+                            return
+
+                        self.boxserial = boxserial
+
+                        self.do_print(self.boxserial, self.snList, self.dataQRcode1, self.dataQRcode2)
+                        self.prepare_next_print()
             else:
                 self.log("查询：" + sn + " 失败！")
             # 清空输入
@@ -206,6 +296,7 @@ class MainUiWin(QMainWindow, Ui_MainWindow):
         while timeout:
             try:
                 r = requests.get(url)
+                logging.debug(r.content)
                 if r.json()['ret']:
                     if r.json()['data']:
                         if not r.json()['data']['boxID_hit']:
@@ -268,6 +359,28 @@ class MainUiWin(QMainWindow, Ui_MainWindow):
                     raise Exception("%s dismatch %s" % (color, r.json()['data']['barcode_color']))
             else:
                 raise Exception("not exist")
+        except Exception as e:
+            logging.debug(str(e))
+            ret = False
+            return ret
+
+        try:
+            url = "http://{}:{}/api/ecasetest/".format(self.servaddr, self.servport) + sn
+            r = requests.get(url)
+            logging.debug(r.content)
+
+            if r.json()['ret']:
+                react = QMessageBox.warning(self, "告警", "{} 已存在装箱记录，需要再次装箱吗？".format(sn),
+                                            QMessageBox.Ok | QMessageBox.Cancel, QMessageBox.Ok)
+                logging.debug(react)
+                if react == QMessageBox.Ok:
+                    self.log("{} 再次装箱".format(sn))
+                    if not self.auth_dialog():
+                        self.log("认证失败！")
+                        raise Exception("authentication")
+                else:
+                    self.log("{} 取消装箱！".format(sn))
+                    raise Exception("cancel")
         except Exception as e:
             logging.debug(str(e))
             ret = False
