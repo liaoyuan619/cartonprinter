@@ -3,8 +3,8 @@
 
 操作界面，
 
-![](help\images\ui.png)
+![](https://github.com/liaoyuan619/cartonprinter/blob/master/help/images/ui.png)
 
 打印效果，
 
-![](help\images\effect.png)
+![](https://github.com/liaoyuan619/cartonprinter/blob/master/help/images/effect.png)
